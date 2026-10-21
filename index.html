@@ -23,6 +23,12 @@
 #toolResult .filter{border-radius:10px;border-color:rgba(177,179,255,.25);color:#e6e3ff;background:rgba(147,133,255,.12)}
 @media(max-width:540px){#toolForm{grid-template-columns:1fr;gap:13px}#toolForm .primary{grid-column:auto}#toolForm input,#toolForm select{height:52px}}
 
+
+/* Hide native number steppers for a cleaner modern UI */
+#toolForm input[type="number"]{-moz-appearance:textfield;appearance:textfield}
+#toolForm input[type="number"]::-webkit-inner-spin-button,
+#toolForm input[type="number"]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+
 </style></head>
 <body><div class="wrap">
 <header class="nav"><a class="brand" href="#"><span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2"><path d="M4 17 10 5l4 8 2-4 4 8H4Z"/></svg></span>PulsoTools</a><nav class="navlinks"><a href="#herramientas">Herramientas</a><a href="#como-funciona">Cómo funciona</a><a href="#faq">Preguntas</a></nav><span class="status">● 100% gratis</span></header>
