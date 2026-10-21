@@ -46,20 +46,36 @@ Deno.serve(async (req: Request) => {
   ].filter(Boolean).join("\n\n");
 
   try {
-    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify({ contents: [{ parts: [{ text: contents }] }], generationConfig: { maxOutputTokens: 700, temperature: 0.8 } })
-    });
-    if (!response.ok) {
-      const detail = await response.text();
-      console.error("Gemini request failed", response.status, detail.slice(0, 400));
-      return json({ error: response.status === 429 ? "Has alcanzado el límite gratuito. Prueba más tarde." : "El servicio de IA no está disponible ahora." }, response.status === 429 ? 429 : 502);
+    // Reintentar y usar modelos alternativos si Google devuelve saturación.
+    const models = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"];
+    let lastStatus = 502;
+    let lastDetail = "";
+    for (const model of models) {
+      let response: Response | null = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify({ contents: [{ parts: [{ text: contents }] }], generationConfig: { maxOutputTokens: 700, temperature: 0.8 } })
+        });
+        if (response.ok) break;
+        lastStatus = response.status;
+        lastDetail = await response.text();
+        console.error("Gemini model failed", model, "attempt", attempt + 1, response.status, lastDetail.slice(0, 250));
+        if (![429, 500, 502, 503, 504].includes(response.status) || attempt === 1) break;
+        await new Promise(resolve => setTimeout(resolve, 700 * (attempt + 1)));
+      }
+      if (response?.ok) {
+        const data = await response.json();
+        const resultText = (data.candidates?.[0]?.content?.parts ?? []).map((p: {text?:string}) => p.text ?? "").join("\n").trim();
+        if (resultText) return json({ text: resultText });
+        lastDetail = "El modelo devolvió una respuesta vacía.";
+      }
+      if (![429, 500, 502, 503, 504].includes(lastStatus)) break;
     }
-    const data = await response.json();
-    const text = (data.candidates?.[0]?.content?.parts ?? []).map((p: {text?:string}) => p.text ?? "").join("\n").trim();
-    if (!text) return json({ error: "La IA no devolvió contenido. Prueba otra vez." }, 502);
-    return json({ text });
+    if (lastStatus === 429) return json({ error: "Google ha alcanzado el límite temporal de solicitudes gratuitas. Espera un minuto y prueba otra vez." }, 429);
+    console.error("All Gemini models failed", lastStatus, lastDetail.slice(0, 300));
+    return json({ error: "Los modelos de IA están temporalmente saturados. Pulsa Generar de nuevo en unos segundos." }, 503);
   } catch (e) {
     console.error("Gemini function error", e);
     return json({ error: "No se pudo conectar con el servicio de IA." }, 502);
