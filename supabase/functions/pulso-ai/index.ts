@@ -16,75 +16,52 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Método no permitido." }, 405);
 
-  const apiKey = Deno.env.get("OPENAI_API_KEY");
-  if (!apiKey) return json({ error: "La IA aún no está configurada en el servidor." }, 503);
+  const apiKey = Deno.env.get("GEMINI_API_KEY");
+  if (!apiKey) return json({ error: "Falta configurar GEMINI_API_KEY en los secretos de Supabase." }, 503);
 
   let body: { tool?: string; prompt?: string; style?: string; topic?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return json({ error: "Solicitud no válida." }, 400);
-  }
+  try { body = await req.json(); } catch { return json({ error: "Solicitud no válida." }, 400); }
 
-  const allowedTools = new Set(["nombres", "bio", "videos", "titulos", "mejorar"]);
+  const allowed = new Set(["nombres", "bio", "videos", "titulos", "mejorar"]);
   const tool = typeof body.tool === "string" ? body.tool : "";
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
   const topic = typeof body.topic === "string" ? body.topic.trim() : "";
   const style = typeof body.style === "string" ? body.style.trim() : "creativo";
-
-  if (!allowedTools.has(tool)) return json({ error: "Herramienta no permitida." }, 400);
-  if (prompt.length > 1200 || topic.length > 300 || style.length > 80) {
-    return json({ error: "El texto es demasiado largo." }, 400);
-  }
+  if (!allowed.has(tool)) return json({ error: "Herramienta no permitida." }, 400);
+  if (prompt.length > 1200 || topic.length > 300 || style.length > 80) return json({ error: "El texto es demasiado largo." }, 400);
   if (!prompt && !topic) return json({ error: "Escribe un tema o una instrucción." }, 400);
 
-  const taskByTool: Record<string, string> = {
-    nombres: "Propón 10 nombres memorables para el proyecto descrito. Evita afirmar que están libres como marca o dominio.",
-    bio: "Crea 5 biografías breves para redes sociales, distintas entre sí y listas para personalizar.",
+  const tasks: Record<string,string> = {
+    nombres: "Propón 10 nombres memorables para el proyecto. Explica brevemente algunos. No afirmes que marcas o dominios estén libres.",
+    bio: "Crea 5 biografías breves para redes sociales, distintas y listas para personalizar.",
     videos: "Propón 5 ideas de vídeos cortos con gancho inicial, desarrollo y llamada a la acción.",
-    titulos: "Propón 10 títulos claros y atractivos, sin prometer resultados falsos ni usar clickbait engañoso.",
-    mejorar: "Mejora el texto del usuario conservando su intención. Ofrece una versión principal y dos alternativas."
+    titulos: "Propón 10 títulos claros y atractivos, sin promesas falsas ni clickbait engañoso.",
+    mejorar: "Mejora el texto conservando su intención. Ofrece una versión principal y dos alternativas."
   };
-
-  const input = [
+  const contents = [
     "Eres el asistente creativo de PulsoTools. Responde en español natural, útil y concreto.",
-    taskByTool[tool],
-    `Estilo solicitado: ${style}`,
-    topic ? `Tema: ${topic}` : "",
-    prompt ? `Instrucciones o texto del usuario: ${prompt}` : "",
+    tasks[tool], "Estilo solicitado: " + style,
+    topic ? "Tema: " + topic : "", prompt ? "Instrucciones o texto del usuario: " + prompt : "",
     "No inventes datos verificables. Usa listas legibles y evita introducciones largas."
   ].filter(Boolean).join("\n\n");
 
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent", {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1-mini",
-        input,
-        max_output_tokens: 650,
-        store: false,
-      }),
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({ contents: [{ parts: [{ text: contents }] }], generationConfig: { maxOutputTokens: 700, temperature: 0.8 } })
     });
     if (!response.ok) {
       const detail = await response.text();
-      console.error("OpenAI request failed", response.status, detail.slice(0, 500));
-      return json({ error: response.status === 429 ? "Límite de uso alcanzado. Inténtalo más tarde." : "El servicio de IA no está disponible ahora." }, response.status === 429 ? 429 : 502);
+      console.error("Gemini request failed", response.status, detail.slice(0, 400));
+      return json({ error: response.status === 429 ? "Has alcanzado el límite gratuito. Prueba más tarde." : "El servicio de IA no está disponible ahora." }, response.status === 429 ? 429 : 502);
     }
     const data = await response.json();
-    const text = (data.output ?? [])
-      .flatMap((item: { content?: Array<{ type?: string; text?: string }> }) => item.content ?? [])
-      .filter((part: { type?: string }) => part.type === "output_text")
-      .map((part: { text?: string }) => part.text ?? "")
-      .join("\n")
-      .trim();
+    const text = (data.candidates?.[0]?.content?.parts ?? []).map((p: {text?:string}) => p.text ?? "").join("\n").trim();
     if (!text) return json({ error: "La IA no devolvió contenido. Prueba otra vez." }, 502);
     return json({ text });
-  } catch (error) {
-    console.error("AI function error", error);
+  } catch (e) {
+    console.error("Gemini function error", e);
     return json({ error: "No se pudo conectar con el servicio de IA." }, 502);
   }
 });
